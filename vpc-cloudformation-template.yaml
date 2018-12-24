@@ -1,0 +1,146 @@
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Deploys a web server on an EC2 instance behind a load balancer
+
+Parameters:
+
+  WebServerKeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: 'AWS::EC2::KeyPair::KeyName'
+    ConstraintDescription: must be the name of an existing EC2 KeyPair.
+
+  WebServerInstanceType:
+    Type: String
+    Default: t2.micro
+    AllowedValues: 
+      - t2.micro
+      - m1.small
+      - m1.large
+    Description: Enter t2.micro, m1.small, or m1.large. Default is t2.micro.
+
+Resources:
+
+  # define the VPC
+
+  ICCVPC:
+    Type: AWS::EC2::VPC
+    Properties: 
+      CidrBlock: 10.0.1.0/24
+      EnableDnsSupport: 'true'
+      EnableDnsHostnames: 'true'
+      InstanceTenancy: 'default'
+      Tags:
+        - Key: Name
+          Value: ICC-VPC
+
+  # Internet Gateway
+
+  ICCIGW:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+      - Key: Name
+        Value: ICC-IGW
+
+  # Attach IGW to VPC
+
+  IGWtoVPCAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties: 
+      InternetGatewayId:
+        Ref: ICCIGW
+      VpcId:
+        Ref: ICCVPC
+
+  # Create subnet in the ICC VPC
+
+  ICCSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: 'us-east-1a'
+      CidrBlock: 10.0.1.0/28
+      MapPublicIpOnLaunch: 'true'
+      Tags:
+        - Key: Name
+          Value: ICC-Subnet-1
+      VpcId: 
+        Ref: ICCVPC
+
+  # Add route table
+
+  ICCRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId:
+        Ref: ICCVPC
+      Tags:
+      - Key: Name
+        Value: ICC Route Table
+
+  # Add route in the route table 
+
+  ICCRouteToInternet:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId:
+        Ref: ICCRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId:
+        Ref: ICCIGW
+
+  # Associate subnet with route table
+
+  ICCSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId:
+        Ref: ICCSubnet
+      RouteTableId:
+        Ref: ICCRouteTable
+
+
+  # Add a security group
+
+  ICCWebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow ports 22 and 80
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      VpcId:
+        Ref: ICCVPC
+
+  # Launch EC2 instance. Install and start apache server.
+
+  ICCWebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties: 
+      InstanceType: 
+        Ref: WebServerInstanceType
+      ImageId: ami-009d6802948d06e52
+      KeyName: 
+        Ref: WebServerKeyName
+      SecurityGroupIds: 
+        - Ref: ICCWebServerSecurityGroup
+      SubnetId: 
+        Ref: ICCSubnet
+      UserData:
+        Fn::Base64: 
+          !Sub |
+            #!/bin/bash 
+            sudo yum update -y
+            sudo yum install httpd -y
+            sudo service httpd start
+
+Outputs:
+  ICCWebServerIpAddress:
+    Description: IP address of the web server
+    Value: !GetAtt ICCWebServerInstance.PublicIp
+
